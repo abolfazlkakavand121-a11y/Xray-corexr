@@ -78,6 +78,54 @@ func TestTLSClientHelloSNISplitRejectsMalformedInput(t *testing.T) {
 	}
 }
 
+func TestTLSRecordSNIFragmentPreservesHandshakeBytes(t *testing.T) {
+	handshake := clientHelloWithSNI("example.com")
+	input := clientHelloRecord(handshake, []byte{20, 3, 3, 0, 1, 1})
+	clientPipe, serverPipe := net.Pipe()
+	defer clientPipe.Close()
+	defer serverPipe.Close()
+
+	conn, err := NewConnClient(&Config{PacketsFrom: -3, PacketsTo: 2}, clientPipe, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type readResult struct {
+		data []byte
+		err  error
+	}
+	read := make(chan readResult, 1)
+	go func() {
+		data, err := readExactly(serverPipe, len(input)+5)
+		read <- readResult{data: data, err: err}
+	}()
+	n, err := conn.Write(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != len(input) {
+		t.Fatalf("Write returned %d, want %d", n, len(input))
+	}
+	result := <-read
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	wire := result.data
+	firstLen := int(binary.BigEndian.Uint16(wire[3:5]))
+	secondOffset := 5 + firstLen
+	if wire[0] != 22 || wire[secondOffset] != 22 {
+		t.Fatal("SNI-aware split did not produce two TLS handshake records")
+	}
+	secondLen := int(binary.BigEndian.Uint16(wire[secondOffset+3 : secondOffset+5]))
+	secondStart := secondOffset + 5
+	reassembled := append(append([]byte{}, wire[5:secondOffset]...), wire[secondStart:secondStart+secondLen]...)
+	if !bytes.Equal(reassembled, handshake) {
+		t.Fatal("SNI-aware split changed the ClientHello handshake bytes")
+	}
+	if !bytes.Equal(wire[secondStart+secondLen:], input[len(input)-6:]) {
+		t.Fatal("bytes after the ClientHello record changed")
+	}
+}
+
 func TestTLSRecordFragmentPreservesHandshakeBytes(t *testing.T) {
 	handshake := []byte{1, 0, 0, 8, 0, 1, 2, 3, 4, 5, 6, 7}
 	tail := []byte{20, 3, 3, 0, 1, 1}
