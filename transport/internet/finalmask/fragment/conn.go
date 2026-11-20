@@ -43,7 +43,7 @@ func (c *fragmentConn) RawConn() net.Conn {
 }
 
 func (c *fragmentConn) Splice() bool {
-	if c.server || c.config.PacketsFrom == -1 {
+	if c.server || c.config.PacketsFrom == -1 || c.config.PacketsFrom == -2 || c.config.PacketsFrom == -3 {
 		return false
 	}
 	return true
