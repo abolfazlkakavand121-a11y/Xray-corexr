@@ -107,9 +107,7 @@ func TestTLSRecordVersionOverrideChangesOnlyRecordHeader(t *testing.T) {
 	want := append([]byte(nil), input...)
 	want[1], want[2] = 3, 3
 	if !bytes.Equal(result.data, want) {
-		t.Fatalf("record version override changed unexpected bytes
- got: %x
-want: %x", result.data, want)
+		t.Fatalf("record version override changed unexpected bytes\\n got: %x\\nwant: %x", result.data, want)
 	}
 	if conn.(interface{ Splice() bool }).Splice() {
 		t.Fatal("TLS record version mode must not be unwrapped for splice")
