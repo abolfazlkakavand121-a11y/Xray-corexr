@@ -30,13 +30,21 @@ func TestTLSRecordMaskConfig(t *testing.T) {
 
 func TestTLSRecordMaskRecordVersionConfig(t *testing.T) {
 	raw, err := tcpmaskLoader.LoadWithID([]byte("{\"recordVersion\":769}"), "tls-record")
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	buildable, ok := raw.(Buildable)
-	if !ok { t.Fatalf("loaded config has type %T, want Buildable", raw) }
+	if !ok {
+		t.Fatalf("loaded config has type %T, want Buildable", raw)
+	}
 	message, err := buildable.Build()
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	config, ok := message.(*fragment.Config)
-	if !ok { t.Fatalf("built config has type %T, want *fragment.Config", message) }
+	if !ok {
+		t.Fatalf("built config has type %T, want *fragment.Config", message)
+	}
 	if config.PacketsFrom != -2 || config.PacketsTo != 769 {
 		t.Fatalf("unexpected record-version mode: from=%d version=%d", config.PacketsFrom, config.PacketsTo)
 	}
