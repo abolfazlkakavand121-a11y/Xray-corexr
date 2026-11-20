@@ -66,6 +66,55 @@ func TestTLSRecordMaskRecordVersionRejectsInvalidConfig(t *testing.T) {
 	}
 }
 
+func TestTLSRecordMaskSNISplitConfig(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		mode int64
+	}{
+		{name: "before-extension", mode: 1},
+		{name: "mid-hostname", mode: 2},
+	} {
+		raw, err := tcpmaskLoader.LoadWithID([]byte(`{"sniSplit":"`+test.name+`"}`), "tls-record")
+		if err != nil {
+			t.Fatal(err)
+		}
+		buildable, ok := raw.(Buildable)
+		if !ok {
+			t.Fatalf("loaded config has type %T, want Buildable", raw)
+		}
+		message, err := buildable.Build()
+		if err != nil {
+			t.Fatal(err)
+		}
+		config, ok := message.(*fragment.Config)
+		if !ok {
+			t.Fatalf("built config has type %T, want *fragment.Config", message)
+		}
+		if config.PacketsFrom != -3 || config.PacketsTo != test.mode {
+			t.Fatalf("unexpected SNI split mode: from=%d mode=%d", config.PacketsFrom, config.PacketsTo)
+		}
+	}
+}
+
+func TestTLSRecordMaskRejectsInvalidSNISplitConfig(t *testing.T) {
+	for _, rawJSON := range []string{
+		`{"sniSplit":"unknown"}`,
+		`{"sniSplit":"mid-hostname","recordVersion":769}`,
+	} {
+		raw, err := tcpmaskLoader.LoadWithID([]byte(rawJSON), "tls-record")
+		if err != nil {
+			t.Fatal(err)
+		}
+		buildable, ok := raw.(Buildable)
+		if !ok {
+			t.Fatalf("loaded config has type %T, want Buildable", raw)
+		}
+		if _, err := buildable.Build(); err == nil {
+			t.Fatalf("expected invalid config to be rejected: %s", rawJSON)
+		}
+	}
+}
+
 func TestTLSRecordMaskConfigRejectsInvalidSplit(t *testing.T) {
 	raw, err := tcpmaskLoader.LoadWithID([]byte("{\"splitAt\":513}"), "tls-record")
 	if err != nil {
