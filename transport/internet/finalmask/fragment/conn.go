@@ -1,9 +1,9 @@
 package fragment
 
 import (
-	"net"
 	"encoding/binary"
 	"io"
+	"net"
 	"time"
 
 	"github.com/xtls/xray-core/common/crypto"
@@ -67,7 +67,6 @@ func (c *fragmentConn) delayForSegment(segIdx int) (int64, int64) {
 func (c *fragmentConn) mergeTlsHelloSegments() bool {
 	return len(c.config.DelaysMax) == 1 && c.config.DelaysMax[0] == 0
 }
-
 
 func (c *fragmentConn) writeTLSRecordFragment(p []byte) (int, error) {
 	// Fail open for non-TLS, incomplete, or non-ClientHello first writes.
