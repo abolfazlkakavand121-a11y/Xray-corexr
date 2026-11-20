@@ -227,6 +227,117 @@ func TestTLSRecordVersionOverrideChangesOnlyRecordHeader(t *testing.T) {
 	}
 }
 
+
+func TestTLSRecordVersionOverrideBuffersSplitApplicationWrites(t *testing.T) {
+	handshake := []byte{1, 0, 0, 8, 0, 1, 2, 3, 4, 5, 6, 7}
+	input := clientHelloRecord(handshake, []byte{20, 3, 3, 0, 1, 1})
+	clientPipe, serverPipe := net.Pipe()
+	defer clientPipe.Close()
+	defer serverPipe.Close()
+
+	conn, err := NewConnClient(&Config{PacketsFrom: -2, PacketsTo: 0x0303}, clientPipe, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	type readResult struct {
+		data []byte
+		err  error
+	}
+	read := make(chan readResult, 1)
+	go func() {
+		data, err := readExactly(serverPipe, len(input))
+		read <- readResult{data: data, err: err}
+	}()
+
+	if n, err := conn.Write(input[:2]); err != nil || n != 2 {
+		t.Fatalf("first partial write: n=%d err=%v", n, err)
+	}
+	if n, err := conn.Write(input[2:]); err != nil || n != len(input)-2 {
+		t.Fatalf("second partial write: n=%d err=%v", n, err)
+	}
+
+	result := <-read
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	want := append([]byte(nil), input...)
+	want[1], want[2] = 3, 3
+	if !bytes.Equal(result.data, want) {
+		t.Fatalf("buffered record version override changed unexpected bytes\n got: %x\nwant: %x", result.data, want)
+	}
+}
+
+func TestTLSRecordSNIFragmentBuffersSplitApplicationWrites(t *testing.T) {
+	handshake := clientHelloWithSNI("example.com")
+	input := clientHelloRecord(handshake, []byte{20, 3, 3, 0, 1, 1})
+	clientPipe, serverPipe := net.Pipe()
+	defer clientPipe.Close()
+	defer serverPipe.Close()
+
+	conn, err := NewConnClient(&Config{PacketsFrom: -3, PacketsTo: 2}, clientPipe, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	type readResult struct {
+		data []byte
+		err  error
+	}
+	read := make(chan readResult, 1)
+	go func() {
+		data, err := readExactly(serverPipe, len(input)+5)
+		read <- readResult{data: data, err: err}
+	}()
+
+	if n, err := conn.Write(input[:3]); err != nil || n != 3 {
+		t.Fatalf("first partial write: n=%d err=%v", n, err)
+	}
+	if n, err := conn.Write(input[3:]); err != nil || n != len(input)-3 {
+		t.Fatalf("second partial write: n=%d err=%v", n, err)
+	}
+
+	result := <-read
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	wire := result.data
+	firstLen := int(binary.BigEndian.Uint16(wire[3:5]))
+	secondOffset := 5 + firstLen
+	secondLen := int(binary.BigEndian.Uint16(wire[secondOffset+3 : secondOffset+5]))
+	secondStart := secondOffset + 5
+	reassembled := append(append([]byte{}, wire[5:secondOffset]...), wire[secondStart:secondStart+secondLen]...)
+	if !bytes.Equal(reassembled, handshake) {
+		t.Fatal("buffered SNI fragmentation changed the ClientHello handshake bytes")
+	}
+}
+
+func TestTLSRecordIncompleteHeaderIsFlushedOnClose(t *testing.T) {
+	pending := []byte{22, 3}
+	clientPipe, serverPipe := net.Pipe()
+	defer serverPipe.Close()
+
+	conn, err := NewConnClient(&Config{PacketsFrom: -2, PacketsTo: 0x0303}, clientPipe, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := conn.Write(pending); err != nil || n != len(pending) {
+		t.Fatalf("partial write: n=%d err=%v", n, err)
+	}
+
+	read := make(chan []byte, 1)
+	go func() {
+		data, _ := readExactly(serverPipe, len(pending))
+		read <- data
+	}()
+	if err := conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-read; !bytes.Equal(got, pending) {
+		t.Fatalf("incomplete TLS prefix = %x, want %x", got, pending)
+	}
+}
+
 func TestTLSRecordVersionOverrideIsClientOnly(t *testing.T) {
 	input := clientHelloRecord([]byte{1, 0, 0, 4, 0, 0, 0, 0}, nil)
 	clientPipe, serverPipe := net.Pipe()

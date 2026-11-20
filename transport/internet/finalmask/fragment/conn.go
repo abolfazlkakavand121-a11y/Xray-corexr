@@ -17,8 +17,9 @@ type fragmentConn struct {
 
 	server bool
 
-	tlsRecordMu   sync.Mutex
-	tlsRecordDone bool
+	tlsRecordMu      sync.Mutex
+	tlsRecordDone    bool
+	tlsRecordPending []byte
 }
 
 func NewConnClient(c *Config, raw net.Conn, server bool) (net.Conn, error) {
@@ -70,6 +71,28 @@ func (c *fragmentConn) delayForSegment(segIdx int) (int64, int64) {
 // mergeTlsHelloSegments returns true only when delays has exactly one zero entry.
 func (c *fragmentConn) mergeTlsHelloSegments() bool {
 	return len(c.config.DelaysMax) == 1 && c.config.DelaysMax[0] == 0
+}
+
+
+// tlsRecordFirstMessageReady reports whether p is safe to inspect as a complete
+// first TLS record. A short record header or payload is buffered across writes;
+// invalid, oversized, and non-TLS prefixes are passed through unchanged.
+func tlsRecordFirstMessageReady(p []byte) bool {
+	if len(p) == 0 || p[0] != 22 {
+		return true
+	}
+	if len(p) < 5 {
+		return false
+	}
+	if p[1] != 3 || p[2] > 4 {
+		return true
+	}
+	recordLen := int(binary.BigEndian.Uint16(p[3:5]))
+	const maxTLSRecordSize = (1 << 14) + 2048
+	if recordLen < 4 || recordLen > maxTLSRecordSize {
+		return true
+	}
+	return len(p) >= 5+recordLen
 }
 
 func (c *fragmentConn) writeTLSRecordVersion(p []byte) (int, error) {
@@ -265,6 +288,25 @@ func writeFull(conn net.Conn, data []byte) error {
 	return nil
 }
 
+
+func (c *fragmentConn) Close() error {
+	c.tlsRecordMu.Lock()
+	pending := c.tlsRecordPending
+	c.tlsRecordPending = nil
+	c.tlsRecordDone = true
+	var writeErr error
+	if len(pending) > 0 {
+		writeErr = writeFull(c.Conn, pending)
+	}
+	c.tlsRecordMu.Unlock()
+
+	closeErr := c.Conn.Close()
+	if writeErr != nil {
+		return writeErr
+	}
+	return closeErr
+}
+
 func (c *fragmentConn) Write(p []byte) (n int, err error) {
 	// Serialize first-flight TLS transforms so concurrent writes cannot overtake them.
 	if c.config.PacketsFrom == -1 || c.config.PacketsFrom == -2 || c.config.PacketsFrom == -3 {
@@ -272,21 +314,33 @@ func (c *fragmentConn) Write(p []byte) (n int, err error) {
 			return c.Conn.Write(p)
 		}
 		c.tlsRecordMu.Lock()
-		if c.tlsRecordDone {
-			c.tlsRecordMu.Unlock()
+		defer c.tlsRecordMu.Unlock()
+
+		if c.tlsRecordDone || len(p) == 0 {
 			return c.Conn.Write(p)
 		}
+
+		// Some TLS clients write the record header and payload in separate calls.
+		// Hold at most one bounded TLS record until its declared payload arrives,
+		// then transform it once. Close flushes an unfinished prefix unchanged.
+		firstWrite := make([]byte, 0, len(c.tlsRecordPending)+len(p))
+		firstWrite = append(firstWrite, c.tlsRecordPending...)
+		firstWrite = append(firstWrite, p...)
+		if !tlsRecordFirstMessageReady(firstWrite) {
+			c.tlsRecordPending = firstWrite
+			return len(p), nil
+		}
+
 		c.tlsRecordDone = true
+		c.tlsRecordPending = nil
 		switch c.config.PacketsFrom {
 		case -1:
-			n, err = c.writeTLSRecordFragment(p)
+			return c.writeTLSRecordFragment(firstWrite)
 		case -2:
-			n, err = c.writeTLSRecordVersion(p)
+			return c.writeTLSRecordVersion(firstWrite)
 		case -3:
-			n, err = c.writeTLSRecordSNIFragment(p)
+			return c.writeTLSRecordSNIFragment(firstWrite)
 		}
-		c.tlsRecordMu.Unlock()
-		return n, err
 	}
 
 	c.count++
