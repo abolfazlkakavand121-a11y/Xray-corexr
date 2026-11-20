@@ -21,7 +21,7 @@ jobs:
           cache: true
       - name: Format changed Go files
         run: |
-          go run mvdan.cc/gofumpt@v0.12.0 -w infra/conf/transport_finalmask.go infra/conf/transport_finalmask_tlsrecord_test.go transport/internet/finalmask/fragment/conn.go transport/internet/finalmask/fragment/tls_record_test.go
+          go run ./infra/vformat/main.go
           if ! git diff --quiet; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
