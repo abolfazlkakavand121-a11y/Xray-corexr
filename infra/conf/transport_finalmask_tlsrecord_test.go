@@ -7,7 +7,7 @@ import (
 )
 
 func TestTLSRecordMaskConfig(t *testing.T) {
-	raw, err := tcpmaskLoader.LoadWithID([]byte(\`{"splitAt":2}\`), "tls-record")
+	raw, err := tcpmaskLoader.LoadWithID([]byte("{\"splitAt\":2}"), "tls-record")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestTLSRecordMaskConfig(t *testing.T) {
 }
 
 func TestTLSRecordMaskConfigRejectsInvalidSplit(t *testing.T) {
-	raw, err := tcpmaskLoader.LoadWithID([]byte(\`{"splitAt":513}\`), "tls-record")
+	raw, err := tcpmaskLoader.LoadWithID([]byte("{\"splitAt\":513}"), "tls-record")
 	if err != nil {
 		t.Fatal(err)
 	}
