@@ -21,6 +21,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Test TLS record parser, four SNI boundaries, buffering, and handshake
+      - name: Test TLS record parser, differential versions, four SNI boundaries, buffering, and handshake
         run: |
           go test -timeout 10m ./transport/internet/finalmask/fragment ./infra/conf
