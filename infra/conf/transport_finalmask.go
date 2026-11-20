@@ -81,6 +81,7 @@ var (
 		"filter":        func() interface{} { return new(Filter) },
 		"header-custom": func() interface{} { return new(HeaderCustomTCP) },
 		"fragment":      func() interface{} { return new(FragmentMask) },
+		"tls-record":    func() interface{} { return new(TLSRecordMask) },
 		"borrow":        func() interface{} { return new(BorrowMask) },
 		"merge":         func() interface{} { return new(MergeMask) },
 		"sudoku":        func() interface{} { return new(Sudoku) },
@@ -322,6 +323,25 @@ func (c *FragmentMask) Build() (proto.Message, error) {
 	config.MaxSplitMax = int64(c.MaxSplit.To)
 
 	return config, nil
+}
+
+// TLSRecordMask splits the first outbound TLS ClientHello handshake record into
+// two valid TLS records. The handshake bytes and transcript remain unchanged.
+type TLSRecordMask struct {
+	SplitAt int32 `json:"splitAt"`
+}
+
+func (c *TLSRecordMask) Build() (proto.Message, error) {
+	splitAt := c.SplitAt
+	if splitAt == 0 {
+		splitAt = 2
+	}
+	if splitAt < 1 || splitAt > 512 {
+		return nil, errors.New("tls-record splitAt must be between 1 and 512")
+	}
+	// PacketsFrom=-1 is an internal mode marker for fragment.Config. It avoids
+	// changing the wire schema while keeping the public JSON config explicit.
+	return &fragment.Config{PacketsFrom: -1, PacketsTo: int64(splitAt)}, nil
 }
 
 type BorrowMask struct {
