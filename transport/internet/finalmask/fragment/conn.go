@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"io"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/xtls/xray-core/common/crypto"
@@ -15,6 +16,9 @@ type fragmentConn struct {
 	count  uint64
 
 	server bool
+
+	tlsRecordMu   sync.Mutex
+	tlsRecordDone bool
 }
 
 func NewConnClient(c *Config, raw net.Conn, server bool) (net.Conn, error) {
@@ -128,16 +132,19 @@ func writeFull(conn net.Conn, data []byte) error {
 }
 
 func (c *fragmentConn) Write(p []byte) (n int, err error) {
-	c.count++
-
-	// TLS record mode is opt-in via the dedicated "tls-record" finalmask type.
-	// It transforms only the first complete outbound ClientHello record.
+	// Serialize TLS-record-mode writes so only the first outbound write can be
+	// transformed and concurrent writes cannot overtake it.
 	if c.config.PacketsFrom == -1 {
-		if c.server || c.count != 1 {
+		c.tlsRecordMu.Lock()
+		defer c.tlsRecordMu.Unlock()
+		if c.server || c.tlsRecordDone {
 			return c.Conn.Write(p)
 		}
+		c.tlsRecordDone = true
 		return c.writeTLSRecordFragment(p)
 	}
+
+	c.count++
 
 	if c.config.PacketsFrom == 0 && c.config.PacketsTo == 1 {
 		if c.count != 1 || len(p) <= 5 || p[0] != 22 {
