@@ -73,7 +73,6 @@ func (c *fragmentConn) mergeTlsHelloSegments() bool {
 	return len(c.config.DelaysMax) == 1 && c.config.DelaysMax[0] == 0
 }
 
-
 // tlsRecordFirstMessageReady reports whether p is safe to inspect as a complete
 // first TLS record. A short record header or payload is buffered across writes;
 // invalid, oversized, and non-TLS prefixes are passed through unchanged.
@@ -287,7 +286,6 @@ func writeFull(conn net.Conn, data []byte) error {
 	}
 	return nil
 }
-
 
 func (c *fragmentConn) Close() error {
 	c.tlsRecordMu.Lock()
