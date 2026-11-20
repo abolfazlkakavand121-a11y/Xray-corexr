@@ -21,13 +21,10 @@ func clientHelloRecord(payload, tail []byte) []byte {
 	return append(wire, tail...)
 }
 
-func readExactly(t *testing.T, conn net.Conn, size int) []byte {
-	t.Helper()
+func readExactly(conn net.Conn, size int) ([]byte, error) {
 	data := make([]byte, size)
-	if _, err := io.ReadFull(conn, data); err != nil {
-		t.Fatal(err)
-	}
-	return data
+	_, err := io.ReadFull(conn, data)
+	return data, err
 }
 
 func TestTLSRecordFragmentPreservesHandshakeBytes(t *testing.T) {
@@ -42,9 +39,14 @@ func TestTLSRecordFragmentPreservesHandshakeBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	readResult := make(chan []byte, 1)
+	type readResult struct {
+		data []byte
+		err  error
+	}
+	read := make(chan readResult, 1)
 	go func() {
-		readResult <- readExactly(t, serverPipe, len(input)+5)
+		data, err := readExactly(serverPipe, len(input)+5)
+		read <- readResult{data: data, err: err}
 	}()
 	n, err := conn.Write(input)
 	if err != nil {
@@ -53,7 +55,11 @@ func TestTLSRecordFragmentPreservesHandshakeBytes(t *testing.T) {
 	if n != len(input) {
 		t.Fatalf("Write returned %d, want %d", n, len(input))
 	}
-	wire := <-readResult
+	result := <-read
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	wire := result.data
 	firstLen := int(wire[3])<<8 | int(wire[4])
 	if wire[0] != 22 || firstLen != 2 {
 		t.Fatalf("unexpected first TLS record: %x", wire[:7])
@@ -86,15 +92,24 @@ func TestTLSRecordFragmentFailsOpenForIncompleteRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	readResult := make(chan []byte, 1)
+	type readResult struct {
+		data []byte
+		err  error
+	}
+	read := make(chan readResult, 1)
 	go func() {
-		readResult <- readExactly(t, serverPipe, len(input))
+		data, err := readExactly(serverPipe, len(input))
+		read <- readResult{data: data, err: err}
 	}()
 	n, err := conn.Write(input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != len(input) || !bytes.Equal(<-readResult, input) {
+	result := <-read
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	if n != len(input) || !bytes.Equal(result.data, input) {
 		t.Fatal("incomplete ClientHello must pass through unchanged")
 	}
 }
@@ -110,14 +125,23 @@ func TestTLSRecordFragmentIsClientOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	readResult := make(chan []byte, 1)
+	type readResult struct {
+		data []byte
+		err  error
+	}
+	read := make(chan readResult, 1)
 	go func() {
-		readResult <- readExactly(t, serverPipe, len(input))
+		data, err := readExactly(serverPipe, len(input))
+		read <- readResult{data: data, err: err}
 	}()
 	if n, err := conn.Write(input); err != nil || n != len(input) {
 		t.Fatalf("server-side write: n=%d err=%v", n, err)
 	}
-	if !bytes.Equal(<-readResult, input) {
+	result := <-read
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	if !bytes.Equal(result.data, input) {
 		t.Fatal("server-side writes must remain unchanged")
 	}
 }
