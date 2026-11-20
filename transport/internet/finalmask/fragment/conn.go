@@ -122,8 +122,9 @@ func (c *fragmentConn) writeTLSRecordVersion(p []byte) (int, error) {
 }
 
 // tlsClientHelloSNISplit returns a split offset within the handshake payload.
-// Mode 1 splits immediately before the SNI extension; mode 2 splits in the
-// middle of the first host_name value. Invalid or absent SNI returns -1.
+// Mode 1 splits before the SNI extension, mode 2 inside its two-byte length
+// header, mode 3 in the first host_name value, and mode 4 after the extension.
+// Invalid or absent SNI returns -1.
 func tlsClientHelloSNISplit(payload []byte, mode int64) int {
 	if len(payload) < 4 || payload[0] != 1 {
 		return -1
@@ -194,7 +195,11 @@ func tlsClientHelloSNISplit(payload []byte, mode int64) int {
 			case 1:
 				return extensionStart
 			case 2:
+				return extensionStart + 2
+			case 3:
 				return hostStart + nameLen/2
+			case 4:
+				return extensionEnd
 			default:
 				return -1
 			}

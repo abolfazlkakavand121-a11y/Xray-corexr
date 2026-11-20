@@ -72,7 +72,9 @@ func TestTLSRecordMaskSNISplitConfig(t *testing.T) {
 		mode int64
 	}{
 		{name: "before-extension", mode: 1},
-		{name: "mid-hostname", mode: 2},
+		{name: "extension-header", mode: 2},
+		{name: "mid-hostname", mode: 3},
+		{name: "after-extension", mode: 4},
 	} {
 		raw, err := tcpmaskLoader.LoadWithID([]byte(`{"sniSplit":"`+test.name+`"}`), "tls-record")
 		if err != nil {
@@ -99,7 +101,7 @@ func TestTLSRecordMaskSNISplitConfig(t *testing.T) {
 func TestTLSRecordMaskRejectsInvalidSNISplitConfig(t *testing.T) {
 	for _, rawJSON := range []string{
 		`{"sniSplit":"unknown"}`,
-		`{"sniSplit":"mid-hostname","recordVersion":769}`,
+		`{"sniSplit":"after-extension","recordVersion":769}`,
 	} {
 		raw, err := tcpmaskLoader.LoadWithID([]byte(rawJSON), "tls-record")
 		if err != nil {

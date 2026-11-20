@@ -43,7 +43,8 @@ func clientHelloWithSNI(host string) []byte {
 	sniExtension := []byte{0, 0, byte(len(sniData) >> 8), byte(len(sniData))}
 	sniExtension = append(sniExtension, sniData...)
 
-	extensions := append(otherExtension, sniExtension...)
+	trailingExtension := []byte{0x12, 0x34, 0, 1, 0}
+	extensions := append(append(otherExtension, sniExtension...), trailingExtension...)
 	body = append(body, byte(len(extensions)>>8), byte(len(extensions)))
 	body = append(body, extensions...)
 
@@ -56,11 +57,18 @@ func TestTLSClientHelloSNISplitOffsets(t *testing.T) {
 	sniExtensionStart := 4 + 2 + 32 + 1 + 2 + 2 + 1 + 1 + 2 + 5
 	hostStart := sniExtensionStart + 4 + 2 + 1 + 2
 
+	sniExtensionEnd := sniExtensionStart + 20
 	if got := tlsClientHelloSNISplit(handshake, 1); got != sniExtensionStart {
 		t.Fatalf("before-extension split = %d, want %d", got, sniExtensionStart)
 	}
-	if got := tlsClientHelloSNISplit(handshake, 2); got != hostStart+len("example.com")/2 {
+	if got := tlsClientHelloSNISplit(handshake, 2); got != sniExtensionStart+2 {
+		t.Fatalf("extension-header split = %d, want %d", got, sniExtensionStart+2)
+	}
+	if got := tlsClientHelloSNISplit(handshake, 3); got != hostStart+len("example.com")/2 {
 		t.Fatalf("mid-hostname split = %d, want %d", got, hostStart+len("example.com")/2)
+	}
+	if got := tlsClientHelloSNISplit(handshake, 4); got != sniExtensionEnd {
+		t.Fatalf("after-extension split = %d, want %d", got, sniExtensionEnd)
 	}
 	if got := tlsClientHelloSNISplit(handshake, 99); got != -1 {
 		t.Fatalf("unknown mode split = %d, want -1", got)
@@ -79,6 +87,48 @@ func TestTLSClientHelloSNISplitRejectsMalformedInput(t *testing.T) {
 	}
 }
 
+
+func TestTLSRecordSNISplitAtExtensionHeaderAndAfterExtensionPreservesHandshake(t *testing.T) {
+	handshake := clientHelloWithSNI("example.com")
+	input := clientHelloRecord(handshake, []byte{20, 3, 3, 0, 1, 1})
+
+	for _, mode := range []int64{2, 4} {
+		clientPipe, serverPipe := net.Pipe()
+		conn, err := NewConnClient(&Config{PacketsFrom: -3, PacketsTo: mode}, clientPipe, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		type readResult struct {
+			data []byte
+			err  error
+		}
+		read := make(chan readResult, 1)
+		go func() {
+			data, err := readExactly(serverPipe, len(input)+5)
+			read <- readResult{data: data, err: err}
+		}()
+
+		if n, err := conn.Write(input); err != nil || n != len(input) {
+			t.Fatalf("mode %d: write n=%d err=%v", mode, n, err)
+		}
+		result := <-read
+		if result.err != nil {
+			t.Fatalf("mode %d: read: %v", mode, result.err)
+		}
+		wire := result.data
+		firstLen := int(binary.BigEndian.Uint16(wire[3:5]))
+		secondOffset := 5 + firstLen
+		secondLen := int(binary.BigEndian.Uint16(wire[secondOffset+3 : secondOffset+5]))
+		secondStart := secondOffset + 5
+		reassembled := append(append([]byte{}, wire[5:secondOffset]...), wire[secondStart:secondStart+secondLen]...)
+		if !bytes.Equal(reassembled, handshake) {
+			t.Fatalf("mode %d changed the ClientHello handshake bytes", mode)
+		}
+		_ = conn.Close()
+		_ = serverPipe.Close()
+	}
+}
+
 func TestTLSRecordSNIFragmentPreservesHandshakeBytes(t *testing.T) {
 	handshake := clientHelloWithSNI("example.com")
 	input := clientHelloRecord(handshake, []byte{20, 3, 3, 0, 1, 1})
@@ -86,7 +136,7 @@ func TestTLSRecordSNIFragmentPreservesHandshakeBytes(t *testing.T) {
 	defer clientPipe.Close()
 	defer serverPipe.Close()
 
-	conn, err := NewConnClient(&Config{PacketsFrom: -3, PacketsTo: 2}, clientPipe, false)
+	conn, err := NewConnClient(&Config{PacketsFrom: -3, PacketsTo: 3}, clientPipe, false)
 	if err != nil {
 		t.Fatal(err)
 	}

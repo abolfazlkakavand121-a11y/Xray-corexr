@@ -342,10 +342,14 @@ func (c *TLSRecordMask) Build() (proto.Message, error) {
 		switch c.SNISplit {
 		case "before-extension":
 			mode = 1
-		case "mid-hostname":
+		case "extension-header":
 			mode = 2
+		case "mid-hostname":
+			mode = 3
+		case "after-extension":
+			mode = 4
 		default:
-			return nil, errors.New("tls-record sniSplit must be before-extension or mid-hostname")
+			return nil, errors.New("tls-record sniSplit must be before-extension, extension-header, mid-hostname, or after-extension")
 		}
 		// PacketsFrom=-3 marks SNI-aware ClientHello fragmentation.
 		return &fragment.Config{PacketsFrom: -3, PacketsTo: mode}, nil
