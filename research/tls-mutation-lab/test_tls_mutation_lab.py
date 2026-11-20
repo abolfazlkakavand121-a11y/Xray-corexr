@@ -5,7 +5,7 @@ class ClientHelloMutationTests(unittest.TestCase):
     def make_hello(self):
         prefix = b"\x03\x03" + bytes(range(32)) + b"\x00" + b"\x00\x02\x13\x01" + b"\x01\x00"
         name = b"example.test"
-        sni_list = b"\x00" + (len(name) + 3).to_bytes(2, "big") + b"\x00" + len(name).to_bytes(2, "big") + name
+        sni_list = (len(name) + 3).to_bytes(2, "big") + b"\x00" + len(name).to_bytes(2, "big") + name
         extensions = [(0, len(sni_list).to_bytes(2, "big") + sni_list), (43, b"\x02\x03\x04")]
         return _record(22, b"\x03\x01", _encode_hello(prefix, extensions))
 
