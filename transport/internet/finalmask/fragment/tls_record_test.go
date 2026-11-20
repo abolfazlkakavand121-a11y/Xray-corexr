@@ -234,7 +234,6 @@ func TestTLSRecordFragmentPreservesHandshakeBytes(t *testing.T) {
 	}
 }
 
-
 func TestTLSRecordDifferentialFragmentVersionsPreserveHandshakeBytes(t *testing.T) {
 	handshake := []byte{1, 0, 0, 8, 0, 1, 2, 3, 4, 5, 6, 7}
 	tail := []byte{20, 3, 3, 0, 1, 1}
@@ -569,7 +568,6 @@ func TestTLSRecordFragmentCompletesTLSHandshake(t *testing.T) {
 	}
 	roots := x509.NewCertPool()
 	roots.AddCert(parsedCert)
-
 
 	for _, test := range []struct {
 		name   string

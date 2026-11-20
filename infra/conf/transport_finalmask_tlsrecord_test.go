@@ -66,7 +66,6 @@ func TestTLSRecordMaskRecordVersionRejectsInvalidConfig(t *testing.T) {
 	}
 }
 
-
 func TestTLSRecordMaskDifferentialFragmentVersionsConfig(t *testing.T) {
 	raw, err := tcpmaskLoader.LoadWithID([]byte(`{"splitAt":2,"firstFragmentVersion":771,"remainingFragmentVersion":769}`), "tls-record")
 	if err != nil {

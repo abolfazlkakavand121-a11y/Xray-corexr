@@ -209,7 +209,6 @@ func tlsClientHelloSNISplit(payload []byte, mode int64) int {
 	return -1
 }
 
-
 // decodeTLSRecordFragmentVersions unpacks the differential record-version mode.
 func decodeTLSRecordFragmentVersions(packed int64) (int, uint16, uint16, bool) {
 	value := uint64(packed)

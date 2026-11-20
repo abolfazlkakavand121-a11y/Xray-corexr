@@ -328,11 +328,11 @@ func (c *FragmentMask) Build() (proto.Message, error) {
 // TLSRecordMask splits the first outbound TLS ClientHello handshake record into
 // two valid TLS records. The handshake bytes and transcript remain unchanged.
 type TLSRecordMask struct {
-	SplitAt                int32  `json:"splitAt"`
-	RecordVersion          int32  `json:"recordVersion"`
-	FirstFragmentVersion   int32  `json:"firstFragmentVersion"`
-	RemainingFragmentVersion int32 `json:"remainingFragmentVersion"`
-	SNISplit               string `json:"sniSplit"`
+	SplitAt                  int32  `json:"splitAt"`
+	RecordVersion            int32  `json:"recordVersion"`
+	FirstFragmentVersion     int32  `json:"firstFragmentVersion"`
+	RemainingFragmentVersion int32  `json:"remainingFragmentVersion"`
+	SNISplit                 string `json:"sniSplit"`
 }
 
 func (c *TLSRecordMask) Build() (proto.Message, error) {
