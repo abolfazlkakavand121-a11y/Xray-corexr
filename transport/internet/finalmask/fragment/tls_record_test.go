@@ -92,18 +92,29 @@ func TestTLSRecordVersionOverrideChangesOnlyRecordHeader(t *testing.T) {
 	defer serverPipe.Close()
 
 	conn, err := NewConnClient(&Config{PacketsFrom: -2, PacketsTo: 0x0303}, clientPipe, false)
-	if err != nil { t.Fatal(err) }
-	type readResult struct { data []byte; err error }
+	if err != nil {
+		t.Fatal(err)
+	}
+	type readResult struct {
+		data []byte
+		err  error
+	}
 	read := make(chan readResult, 1)
 	go func() {
 		data, err := readExactly(serverPipe, len(input))
 		read <- readResult{data: data, err: err}
 	}()
 	n, err := conn.Write(input)
-	if err != nil { t.Fatal(err) }
-	if n != len(input) { t.Fatalf("Write returned %d, want %d", n, len(input)) }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != len(input) {
+		t.Fatalf("Write returned %d, want %d", n, len(input))
+	}
 	result := <-read
-	if result.err != nil { t.Fatal(result.err) }
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
 	want := append([]byte(nil), input...)
 	want[1], want[2] = 3, 3
 	if !bytes.Equal(result.data, want) {
@@ -119,8 +130,11 @@ func TestTLSRecordVersionOverrideIsClientOnly(t *testing.T) {
 	clientPipe, serverPipe := net.Pipe()
 	defer clientPipe.Close()
 	defer serverPipe.Close()
+
 	conn, err := NewConnServer(&Config{PacketsFrom: -2, PacketsTo: 0x0303}, clientPipe, true)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	read := make(chan []byte, 1)
 	go func() {
 		data, _ := readExactly(serverPipe, len(input))
