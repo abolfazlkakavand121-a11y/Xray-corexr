@@ -75,11 +75,15 @@ func (c *fragmentConn) mergeTlsHelloSegments() bool {
 func (c *fragmentConn) writeTLSRecordVersion(p []byte) (int, error) {
 	// Change only the legacy_version bytes of the first TLS ClientHello record.
 	// The handshake payload and transcript are left byte-for-byte unchanged.
-	if len(p) < 9 || p[0] != 22 || p[5] != 1 {
+	if len(p) < 9 || p[0] != 22 {
 		return c.Conn.Write(p)
 	}
 	recordLen := int(binary.BigEndian.Uint16(p[3:5]))
-	if recordLen < 4 || 5+recordLen > len(p) {
+	if recordLen < 4 || 5+recordLen > len(p) || p[5] != 1 {
+		return c.Conn.Write(p)
+	}
+	handshakeLen := int(p[6])<<16 | int(p[7])<<8 | int(p[8])
+	if handshakeLen+4 > recordLen {
 		return c.Conn.Write(p)
 	}
 	version := uint16(c.config.PacketsTo)
