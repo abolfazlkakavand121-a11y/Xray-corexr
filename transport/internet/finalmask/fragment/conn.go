@@ -265,7 +265,6 @@ func (c *fragmentConn) writeTLSRecordFragment(p []byte) (int, error) {
 	return len(p), nil
 }
 
-
 func writeUnmodified(conn net.Conn, data []byte) (int, error) {
 	if err := writeFull(conn, data); err != nil {
 		return 0, err
