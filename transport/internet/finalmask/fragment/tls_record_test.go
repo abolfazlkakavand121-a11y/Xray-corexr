@@ -87,7 +87,6 @@ func TestTLSClientHelloSNISplitRejectsMalformedInput(t *testing.T) {
 	}
 }
 
-
 func TestTLSRecordSNISplitAtExtensionHeaderAndAfterExtensionPreservesHandshake(t *testing.T) {
 	handshake := clientHelloWithSNI("example.com")
 	input := clientHelloRecord(handshake, []byte{20, 3, 3, 0, 1, 1})
