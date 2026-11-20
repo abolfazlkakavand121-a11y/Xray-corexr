@@ -180,8 +180,7 @@ jobs:
           cp ${GITHUB_WORKSPACE}/LICENSE ./build_assets/LICENSE
 
       - name: Upload files to Artifacts
-        uses: actions/upload-artifact@v7
-        with:
+        uses: actions/upload-artifact@v7        with:
           name: Xray-${{ env.ASSET_NAME }}
           path: |
             ./build_assets/*

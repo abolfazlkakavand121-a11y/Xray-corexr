@@ -360,10 +360,9 @@ func TestTLSRecordVersionOverrideIsClientOnly(t *testing.T) {
 	}
 }
 
-func TestTLSRecordFragmentFailsOpenForIncompleteRecord(t *testing.T) {
+func TestTLSRecordFragmentBuffersIncompleteRecordUntilClose(t *testing.T) {
 	input := []byte{22, 3, 1, 0, 20, 1, 0}
 	clientPipe, serverPipe := net.Pipe()
-	defer clientPipe.Close()
 	defer serverPipe.Close()
 
 	conn, err := NewConnClient(&Config{PacketsFrom: -1, PacketsTo: 2}, clientPipe, false)
@@ -379,16 +378,21 @@ func TestTLSRecordFragmentFailsOpenForIncompleteRecord(t *testing.T) {
 		data, err := readExactly(serverPipe, len(input))
 		read <- readResult{data: data, err: err}
 	}()
-	n, err := conn.Write(input)
-	if err != nil {
+
+	if n, err := conn.Write(input); err != nil || n != len(input) {
+		t.Fatalf("incomplete record write: n=%d err=%v", n, err)
+	}
+	// The declared record is incomplete, so it is flushed unchanged only when
+	// the caller closes the connection instead of being transformed or lost.
+	if err := conn.Close(); err != nil {
 		t.Fatal(err)
 	}
 	result := <-read
 	if result.err != nil {
 		t.Fatal(result.err)
 	}
-	if n != len(input) || !bytes.Equal(result.data, input) {
-		t.Fatal("incomplete ClientHello must pass through unchanged")
+	if !bytes.Equal(result.data, input) {
+		t.Fatal("incomplete ClientHello record must be flushed unchanged on close")
 	}
 }
 
