@@ -2,6 +2,8 @@ package fragment
 
 import (
 	"net"
+	"encoding/binary"
+	"io"
 	"time"
 
 	"github.com/xtls/xray-core/common/crypto"
@@ -66,8 +68,77 @@ func (c *fragmentConn) mergeTlsHelloSegments() bool {
 	return len(c.config.DelaysMax) == 1 && c.config.DelaysMax[0] == 0
 }
 
+
+func (c *fragmentConn) writeTLSRecordFragment(p []byte) (int, error) {
+	// Fail open for non-TLS, incomplete, or non-ClientHello first writes.
+	if len(p) < 9 || p[0] != 22 {
+		return c.Conn.Write(p)
+	}
+	recordLen := int(binary.BigEndian.Uint16(p[3:5]))
+	recordEnd := 5 + recordLen
+	if recordLen < 4 || recordEnd > len(p) {
+		return c.Conn.Write(p)
+	}
+	payload := p[5:recordEnd]
+	if payload[0] != 1 {
+		return c.Conn.Write(p)
+	}
+	handshakeLen := int(payload[1])<<16 | int(payload[2])<<8 | int(payload[3])
+	if handshakeLen+4 > len(payload) {
+		return c.Conn.Write(p)
+	}
+	splitAt := int(c.config.PacketsTo)
+	if splitAt <= 0 || splitAt >= len(payload) {
+		return c.Conn.Write(p)
+	}
+
+	// TLS permits a handshake message to span multiple records. Reusing the
+	// original record version and preserving every handshake byte keeps the
+	// TLS transcript unchanged; only record boundaries differ.
+	wire := make([]byte, 0, len(p)+5)
+	wire = appendTLSRecord(wire, p[:3], payload[:splitAt])
+	wire = appendTLSRecord(wire, p[:3], payload[splitAt:])
+	wire = append(wire, p[recordEnd:]...)
+
+	if err := writeFull(c.Conn, wire); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+func appendTLSRecord(dst, header, payload []byte) []byte {
+	dst = append(dst, header[:3]...)
+	dst = append(dst, byte(len(payload)>>8), byte(len(payload)))
+	return append(dst, payload...)
+}
+
+func writeFull(conn net.Conn, data []byte) error {
+	for len(data) > 0 {
+		n, err := conn.Write(data)
+		if n > 0 {
+			data = data[n:]
+		}
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+	}
+	return nil
+}
+
 func (c *fragmentConn) Write(p []byte) (n int, err error) {
 	c.count++
+
+	// TLS record mode is opt-in via the dedicated "tls-record" finalmask type.
+	// It transforms only the first complete outbound ClientHello record.
+	if c.config.PacketsFrom == -1 {
+		if c.server || c.count != 1 {
+			return c.Conn.Write(p)
+		}
+		return c.writeTLSRecordFragment(p)
+	}
 
 	if c.config.PacketsFrom == 0 && c.config.PacketsTo == 1 {
 		if c.count != 1 || len(p) <= 5 || p[0] != 22 {
