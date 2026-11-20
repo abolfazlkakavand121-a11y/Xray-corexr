@@ -1,0 +1,26 @@
+name: TLS record version override tests
+
+on:
+  push:
+    branches:
+      - feature/tls-record-version-override
+  pull_request:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test TLS record parser, differential versions, four SNI boundaries, buffering, and handshake
+        run: |
+          go test -timeout 10m ./transport/internet/finalmask/fragment ./infra/conf

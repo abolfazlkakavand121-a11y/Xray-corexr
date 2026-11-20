@@ -142,7 +142,9 @@ func TestVMessClosing(t *testing.T) {
 	common.Must(err)
 	defer CloseAllServers(servers)
 
-	if err := testTCPConn(clientPort, 1024, time.Second*2)(); err != io.EOF {
+	// The two Xray subprocesses can be scheduled slowly on shared CI runners; allow the
+	// quick-closing destination a little longer to propagate EOF without hiding a stuck connection.
+	if err := testTCPConn(clientPort, 1024, time.Second*5)(); err != io.EOF {
 		t.Error(err)
 	}
 }

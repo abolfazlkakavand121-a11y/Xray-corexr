@@ -1,0 +1,31 @@
+name: Format TLS record changes
+
+on:
+  push:
+    branches:
+      - feature/tls-record-version-override
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Format changed Go files
+        run: |
+          go run ./infra/vformat/main.go
+          if ! git diff --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add infra/conf/transport_finalmask.go infra/conf/transport_finalmask_tlsrecord_test.go transport/internet/finalmask/fragment/conn.go transport/internet/finalmask/fragment/tls_record_test.go
+            git commit -m "Format TLS record implementation"
+            git push
+          fi
