@@ -91,7 +91,7 @@ func TestTLSRecordSNISplitAtExtensionHeaderAndAfterExtensionPreservesHandshake(t
 	handshake := clientHelloWithSNI("example.com")
 	input := clientHelloRecord(handshake, []byte{20, 3, 3, 0, 1, 1})
 
-	for _, mode := range []int64{2, 4} {
+	for _, mode := range []int64{1, 2, 4} {
 		clientPipe, serverPipe := net.Pipe()
 		conn, err := NewConnClient(&Config{PacketsFrom: -3, PacketsTo: mode}, clientPipe, false)
 		if err != nil {
