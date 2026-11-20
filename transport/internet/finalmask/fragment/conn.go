@@ -44,7 +44,7 @@ func (c *fragmentConn) RawConn() net.Conn {
 }
 
 func (c *fragmentConn) Splice() bool {
-	if c.server || c.config.PacketsFrom == -1 || c.config.PacketsFrom == -2 || c.config.PacketsFrom == -3 {
+	if c.server || c.config.PacketsFrom == -1 || c.config.PacketsFrom == -2 || c.config.PacketsFrom == -3 || c.config.PacketsFrom == -4 {
 		return false
 	}
 	return true
@@ -209,6 +209,63 @@ func tlsClientHelloSNISplit(payload []byte, mode int64) int {
 	return -1
 }
 
+
+// decodeTLSRecordFragmentVersions unpacks the differential record-version mode.
+func decodeTLSRecordFragmentVersions(packed int64) (int, uint16, uint16, bool) {
+	value := uint64(packed)
+	splitAt := int(value & 0x3ff)
+	firstVersion := uint16((value >> 10) & 0xffff)
+	remainingVersion := uint16((value >> 26) & 0xffff)
+	validVersion := func(version uint16) bool {
+		return version >= 0x0301 && version <= 0x0303
+	}
+	if splitAt < 1 || splitAt > 512 || !validVersion(firstVersion) || !validVersion(remainingVersion) {
+		return 0, 0, 0, false
+	}
+	return splitAt, firstVersion, remainingVersion, true
+}
+
+// writeTLSRecordVersionedFragment splits the first ClientHello record and gives
+// each emitted TLS record its own legacy_version. Handshake bytes stay unchanged.
+func (c *fragmentConn) writeTLSRecordVersionedFragment(p []byte) (int, error) {
+	if len(p) < 9 || p[0] != 22 {
+		return writeUnmodified(c.Conn, p)
+	}
+	recordLen := int(binary.BigEndian.Uint16(p[3:5]))
+	recordEnd := 5 + recordLen
+	if recordLen < 4 || recordEnd > len(p) {
+		return writeUnmodified(c.Conn, p)
+	}
+	payload := p[5:recordEnd]
+	if payload[0] != 1 {
+		return writeUnmodified(c.Conn, p)
+	}
+	handshakeLen := int(payload[1])<<16 | int(payload[2])<<8 | int(payload[3])
+	if handshakeLen+4 > len(payload) {
+		return writeUnmodified(c.Conn, p)
+	}
+	splitAt, firstVersion, remainingVersion, valid := decodeTLSRecordFragmentVersions(c.config.PacketsTo)
+	if !valid || splitAt >= len(payload) {
+		return writeUnmodified(c.Conn, p)
+	}
+
+	firstHeader := append([]byte(nil), p[:3]...)
+	firstHeader[1] = byte(firstVersion >> 8)
+	firstHeader[2] = byte(firstVersion)
+	remainingHeader := append([]byte(nil), p[:3]...)
+	remainingHeader[1] = byte(remainingVersion >> 8)
+	remainingHeader[2] = byte(remainingVersion)
+
+	wire := make([]byte, 0, len(p)+5)
+	wire = appendTLSRecord(wire, firstHeader, payload[:splitAt])
+	wire = appendTLSRecord(wire, remainingHeader, payload[splitAt:])
+	wire = append(wire, p[recordEnd:]...)
+	if err := writeFull(c.Conn, wire); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
 func (c *fragmentConn) writeTLSRecordSNIFragment(p []byte) (int, error) {
 	if len(p) < 9 || p[0] != 22 {
 		return writeUnmodified(c.Conn, p)
@@ -319,7 +376,7 @@ func (c *fragmentConn) Close() error {
 
 func (c *fragmentConn) Write(p []byte) (n int, err error) {
 	// Serialize first-flight TLS transforms so concurrent writes cannot overtake them.
-	if c.config.PacketsFrom == -1 || c.config.PacketsFrom == -2 || c.config.PacketsFrom == -3 {
+	if c.config.PacketsFrom == -1 || c.config.PacketsFrom == -2 || c.config.PacketsFrom == -3 || c.config.PacketsFrom == -4 {
 		if c.server {
 			return c.Conn.Write(p)
 		}
@@ -350,6 +407,8 @@ func (c *fragmentConn) Write(p []byte) (n int, err error) {
 			_, err = c.writeTLSRecordVersion(firstWrite)
 		case -3:
 			_, err = c.writeTLSRecordSNIFragment(firstWrite)
+		case -4:
+			_, err = c.writeTLSRecordVersionedFragment(firstWrite)
 		}
 		if err != nil {
 			return 0, err

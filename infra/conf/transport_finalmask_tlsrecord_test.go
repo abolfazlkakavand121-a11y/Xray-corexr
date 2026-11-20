@@ -66,6 +66,53 @@ func TestTLSRecordMaskRecordVersionRejectsInvalidConfig(t *testing.T) {
 	}
 }
 
+
+func TestTLSRecordMaskDifferentialFragmentVersionsConfig(t *testing.T) {
+	raw, err := tcpmaskLoader.LoadWithID([]byte(`{"splitAt":2,"firstFragmentVersion":771,"remainingFragmentVersion":769}`), "tls-record")
+	if err != nil {
+		t.Fatal(err)
+	}
+	buildable, ok := raw.(Buildable)
+	if !ok {
+		t.Fatalf("loaded config has type %T, want Buildable", raw)
+	}
+	message, err := buildable.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, ok := message.(*fragment.Config)
+	if !ok {
+		t.Fatalf("built config has type %T, want *fragment.Config", message)
+	}
+	want := int64(2) | (int64(0x0303) << 10) | (int64(0x0301) << 26)
+	if config.PacketsFrom != -4 || config.PacketsTo != want {
+		t.Fatalf("unexpected differential version config: from=%d packed=%d want=%d", config.PacketsFrom, config.PacketsTo, want)
+	}
+}
+
+func TestTLSRecordMaskDifferentialFragmentVersionsRejectInvalidConfig(t *testing.T) {
+	for _, rawJSON := range []string{
+		`{"firstFragmentVersion":771}`,
+		`{"remainingFragmentVersion":769}`,
+		`{"firstFragmentVersion":772,"remainingFragmentVersion":769}`,
+		`{"firstFragmentVersion":771,"remainingFragmentVersion":768}`,
+		`{"splitAt":513,"firstFragmentVersion":771,"remainingFragmentVersion":769}`,
+		`{"recordVersion":771,"firstFragmentVersion":771,"remainingFragmentVersion":769}`,
+	} {
+		raw, err := tcpmaskLoader.LoadWithID([]byte(rawJSON), "tls-record")
+		if err != nil {
+			t.Fatal(err)
+		}
+		buildable, ok := raw.(Buildable)
+		if !ok {
+			t.Fatalf("loaded config has type %T, want Buildable", raw)
+		}
+		if _, err := buildable.Build(); err == nil {
+			t.Fatalf("expected invalid config to be rejected: %s", rawJSON)
+		}
+	}
+}
+
 func TestTLSRecordMaskSNISplitConfig(t *testing.T) {
 	for _, test := range []struct {
 		name string

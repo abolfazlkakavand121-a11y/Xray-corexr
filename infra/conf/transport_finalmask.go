@@ -328,15 +328,17 @@ func (c *FragmentMask) Build() (proto.Message, error) {
 // TLSRecordMask splits the first outbound TLS ClientHello handshake record into
 // two valid TLS records. The handshake bytes and transcript remain unchanged.
 type TLSRecordMask struct {
-	SplitAt       int32  `json:"splitAt"`
-	RecordVersion int32  `json:"recordVersion"`
-	SNISplit      string `json:"sniSplit"`
+	SplitAt                int32  `json:"splitAt"`
+	RecordVersion          int32  `json:"recordVersion"`
+	FirstFragmentVersion   int32  `json:"firstFragmentVersion"`
+	RemainingFragmentVersion int32 `json:"remainingFragmentVersion"`
+	SNISplit               string `json:"sniSplit"`
 }
 
 func (c *TLSRecordMask) Build() (proto.Message, error) {
 	if c.SNISplit != "" {
-		if c.SplitAt != 0 || c.RecordVersion != 0 {
-			return nil, errors.New("tls-record sniSplit cannot be combined with splitAt or recordVersion")
+		if c.SplitAt != 0 || c.RecordVersion != 0 || c.FirstFragmentVersion != 0 || c.RemainingFragmentVersion != 0 {
+			return nil, errors.New("tls-record sniSplit cannot be combined with splitAt, recordVersion, or fragment versions")
 		}
 		var mode int64
 		switch c.SNISplit {
@@ -354,6 +356,27 @@ func (c *TLSRecordMask) Build() (proto.Message, error) {
 		// PacketsFrom=-3 marks SNI-aware ClientHello fragmentation.
 		return &fragment.Config{PacketsFrom: -3, PacketsTo: mode}, nil
 	}
+	if c.FirstFragmentVersion != 0 || c.RemainingFragmentVersion != 0 {
+		if c.RecordVersion != 0 {
+			return nil, errors.New("tls-record recordVersion cannot be combined with differential fragment versions")
+		}
+		if c.FirstFragmentVersion < 0x0301 || c.FirstFragmentVersion > 0x0303 ||
+			c.RemainingFragmentVersion < 0x0301 || c.RemainingFragmentVersion > 0x0303 {
+			return nil, errors.New("tls-record fragment versions must both be 0x0301, 0x0302, or 0x0303")
+		}
+		splitAt := c.SplitAt
+		if splitAt == 0 {
+			splitAt = 2
+		}
+		if splitAt < 1 || splitAt > 512 {
+			return nil, errors.New("tls-record splitAt must be between 1 and 512")
+		}
+		packed := uint64(splitAt) |
+			(uint64(c.FirstFragmentVersion) << 10) |
+			(uint64(c.RemainingFragmentVersion) << 26)
+		return &fragment.Config{PacketsFrom: -4, PacketsTo: int64(packed)}, nil
+	}
+
 	if c.RecordVersion != 0 {
 		if c.SplitAt != 0 {
 			return nil, errors.New("tls-record splitAt and recordVersion are separate modes")

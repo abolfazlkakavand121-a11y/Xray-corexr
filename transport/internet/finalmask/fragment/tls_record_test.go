@@ -234,6 +234,65 @@ func TestTLSRecordFragmentPreservesHandshakeBytes(t *testing.T) {
 	}
 }
 
+
+func TestTLSRecordDifferentialFragmentVersionsPreserveHandshakeBytes(t *testing.T) {
+	handshake := []byte{1, 0, 0, 8, 0, 1, 2, 3, 4, 5, 6, 7}
+	tail := []byte{20, 3, 3, 0, 1, 1}
+	input := clientHelloRecord(handshake, tail)
+	packed := int64(2) | (int64(0x0303) << 10) | (int64(0x0301) << 26)
+	clientPipe, serverPipe := net.Pipe()
+	defer clientPipe.Close()
+	defer serverPipe.Close()
+
+	conn, err := NewConnClient(&Config{PacketsFrom: -4, PacketsTo: packed}, clientPipe, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type readResult struct {
+		data []byte
+		err  error
+	}
+	read := make(chan readResult, 1)
+	go func() {
+		data, err := readExactly(serverPipe, len(input)+5)
+		read <- readResult{data: data, err: err}
+	}()
+
+	n, err := conn.Write(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != len(input) {
+		t.Fatalf("Write returned %d, want %d", n, len(input))
+	}
+	result := <-read
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+
+	wire := result.data
+	firstLen := int(binary.BigEndian.Uint16(wire[3:5]))
+	secondOffset := 5 + firstLen
+	secondLen := int(binary.BigEndian.Uint16(wire[secondOffset+3 : secondOffset+5]))
+	secondStart := secondOffset + 5
+	if got := binary.BigEndian.Uint16(wire[1:3]); got != 0x0303 {
+		t.Fatalf("first record version = 0x%04x, want 0x0303", got)
+	}
+	if got := binary.BigEndian.Uint16(wire[secondOffset+1 : secondOffset+3]); got != 0x0301 {
+		t.Fatalf("remaining record version = 0x%04x, want 0x0301", got)
+	}
+	reassembled := append(append([]byte{}, wire[5:secondOffset]...), wire[secondStart:secondStart+secondLen]...)
+	if !bytes.Equal(reassembled, handshake) {
+		t.Fatal("differential fragmentation changed the ClientHello handshake bytes")
+	}
+	if !bytes.Equal(wire[secondStart+secondLen:], tail) {
+		t.Fatal("bytes after the ClientHello record changed")
+	}
+	if conn.(interface{ Splice() bool }).Splice() {
+		t.Fatal("differential TLS record mode must not be unwrapped for splice")
+	}
+}
+
 func TestTLSRecordVersionOverrideChangesOnlyRecordHeader(t *testing.T) {
 	handshake := []byte{1, 0, 0, 8, 0, 1, 2, 3, 4, 5, 6, 7}
 	tail := []byte{20, 3, 3, 0, 1, 1}
@@ -511,34 +570,52 @@ func TestTLSRecordFragmentCompletesTLSHandshake(t *testing.T) {
 	roots := x509.NewCertPool()
 	roots.AddCert(parsedCert)
 
-	clientPipe, serverPipe := net.Pipe()
-	defer clientPipe.Close()
-	defer serverPipe.Close()
-	if err := clientPipe.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	if err := serverPipe.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	maskedClient, err := NewConnClient(&Config{PacketsFrom: -1, PacketsTo: 2}, clientPipe, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	client := tls.Client(maskedClient, &tls.Config{
-		ServerName: "example.test",
-		RootCAs:    roots,
-	})
-	server := tls.Server(serverPipe, &tls.Config{
-		Certificates: []tls.Certificate{serverCert},
-	})
-	serverResult := make(chan error, 1)
-	go func() {
-		serverResult <- server.Handshake()
-	}()
-	if err := client.Handshake(); err != nil {
-		t.Fatalf("client handshake failed: %v", err)
-	}
-	if err := <-serverResult; err != nil {
-		t.Fatalf("server handshake failed: %v", err)
+
+	for _, test := range []struct {
+		name   string
+		config *Config
+	}{
+		{name: "ordinary-fragment", config: &Config{PacketsFrom: -1, PacketsTo: 2}},
+		{name: "differential-fragment-versions", config: &Config{
+			PacketsFrom: -4,
+			PacketsTo:   int64(2) | (int64(0x0303) << 10) | (int64(0x0301) << 26),
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			clientPipe, serverPipe := net.Pipe()
+			defer clientPipe.Close()
+			defer serverPipe.Close()
+			if err := clientPipe.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			if err := serverPipe.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			maskedClient, err := NewConnClient(test.config, clientPipe, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			client := tls.Client(maskedClient, &tls.Config{
+				ServerName: "example.test",
+				RootCAs:    roots,
+				MinVersion: tls.VersionTLS12,
+				MaxVersion: tls.VersionTLS12,
+			})
+			server := tls.Server(serverPipe, &tls.Config{
+				Certificates: []tls.Certificate{serverCert},
+				MinVersion:   tls.VersionTLS12,
+				MaxVersion:   tls.VersionTLS12,
+			})
+			serverResult := make(chan error, 1)
+			go func() {
+				serverResult <- server.Handshake()
+			}()
+			if err := client.Handshake(); err != nil {
+				t.Fatalf("client handshake failed: %v", err)
+			}
+			if err := <-serverResult; err != nil {
+				t.Fatalf("server handshake failed: %v", err)
+			}
+		})
 	}
 }
