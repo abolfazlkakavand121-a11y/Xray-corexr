@@ -1,7 +1,10 @@
 package fragment
 
 import (
+	"encoding/binary"
+	"io"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/xtls/xray-core/common/crypto"
@@ -13,6 +16,9 @@ type fragmentConn struct {
 	count  uint64
 
 	server bool
+
+	tlsRecordMu   sync.Mutex
+	tlsRecordDone bool
 }
 
 func NewConnClient(c *Config, raw net.Conn, server bool) (net.Conn, error) {
@@ -37,7 +43,7 @@ func (c *fragmentConn) RawConn() net.Conn {
 }
 
 func (c *fragmentConn) Splice() bool {
-	if c.server {
+	if c.server || c.config.PacketsFrom == -1 {
 		return false
 	}
 	return true
@@ -66,7 +72,83 @@ func (c *fragmentConn) mergeTlsHelloSegments() bool {
 	return len(c.config.DelaysMax) == 1 && c.config.DelaysMax[0] == 0
 }
 
+func (c *fragmentConn) writeTLSRecordFragment(p []byte) (int, error) {
+	// Fail open for non-TLS, incomplete, or non-ClientHello first writes.
+	if len(p) < 9 || p[0] != 22 {
+		return c.Conn.Write(p)
+	}
+	recordLen := int(binary.BigEndian.Uint16(p[3:5]))
+	recordEnd := 5 + recordLen
+	if recordLen < 4 || recordEnd > len(p) {
+		return c.Conn.Write(p)
+	}
+	payload := p[5:recordEnd]
+	if payload[0] != 1 {
+		return c.Conn.Write(p)
+	}
+	handshakeLen := int(payload[1])<<16 | int(payload[2])<<8 | int(payload[3])
+	if handshakeLen+4 > len(payload) {
+		return c.Conn.Write(p)
+	}
+	splitAt := int(c.config.PacketsTo)
+	if splitAt <= 0 || splitAt >= len(payload) {
+		return c.Conn.Write(p)
+	}
+
+	// TLS permits a handshake message to span multiple records. Reusing the
+	// original record version and preserving every handshake byte keeps the
+	// TLS transcript unchanged; only record boundaries differ.
+	wire := make([]byte, 0, len(p)+5)
+	wire = appendTLSRecord(wire, p[:3], payload[:splitAt])
+	wire = appendTLSRecord(wire, p[:3], payload[splitAt:])
+	wire = append(wire, p[recordEnd:]...)
+
+	if err := writeFull(c.Conn, wire); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+func appendTLSRecord(dst, header, payload []byte) []byte {
+	dst = append(dst, header[:3]...)
+	dst = append(dst, byte(len(payload)>>8), byte(len(payload)))
+	return append(dst, payload...)
+}
+
+func writeFull(conn net.Conn, data []byte) error {
+	for len(data) > 0 {
+		n, err := conn.Write(data)
+		if n > 0 {
+			data = data[n:]
+		}
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+	}
+	return nil
+}
+
 func (c *fragmentConn) Write(p []byte) (n int, err error) {
+	// Serialize TLS-record-mode writes so only the first outbound write can be
+	// transformed and concurrent writes cannot overtake it.
+	if c.config.PacketsFrom == -1 {
+		if c.server {
+			return c.Conn.Write(p)
+		}
+		c.tlsRecordMu.Lock()
+		if c.tlsRecordDone {
+			c.tlsRecordMu.Unlock()
+			return c.Conn.Write(p)
+		}
+		c.tlsRecordDone = true
+		n, err = c.writeTLSRecordFragment(p)
+		c.tlsRecordMu.Unlock()
+		return n, err
+	}
+
 	c.count++
 
 	if c.config.PacketsFrom == 0 && c.config.PacketsTo == 1 {
