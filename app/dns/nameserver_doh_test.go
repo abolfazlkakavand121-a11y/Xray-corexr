@@ -3,6 +3,7 @@ package dns_test
 import (
 	"context"
 	"net/url"
+	stdnet "net"
 	"testing"
 	"time"
 
@@ -13,7 +14,18 @@ import (
 	dns_feature "github.com/xtls/xray-core/features/dns"
 )
 
+func requirePublicDoHEndpoint(t *testing.T) {
+	t.Helper()
+	dialer := stdnet.Dialer{Timeout: 2 * time.Second}
+	conn, err := dialer.DialContext(context.Background(), "tcp", "1.1.1.1:443")
+	if err != nil {
+		t.Skipf("public DoH endpoint 1.1.1.1:443 is unavailable in this runner: %v", err)
+	}
+	_ = conn.Close()
+}
+
 func TestDOHNameServer(t *testing.T) {
+	requirePublicDoHEndpoint(t)
 	url, err := url.Parse("https+local://1.1.1.1/dns-query")
 	common.Must(err)
 
@@ -31,6 +43,7 @@ func TestDOHNameServer(t *testing.T) {
 }
 
 func TestDOHNameServerWithCache(t *testing.T) {
+	requirePublicDoHEndpoint(t)
 	url, err := url.Parse("https+local://1.1.1.1/dns-query")
 	common.Must(err)
 
@@ -59,6 +72,7 @@ func TestDOHNameServerWithCache(t *testing.T) {
 }
 
 func TestDOHNameServerWithIPv4Override(t *testing.T) {
+	requirePublicDoHEndpoint(t)
 	url, err := url.Parse("https+local://1.1.1.1/dns-query")
 	common.Must(err)
 
@@ -82,6 +96,7 @@ func TestDOHNameServerWithIPv4Override(t *testing.T) {
 }
 
 func TestDOHNameServerWithIPv6Override(t *testing.T) {
+	requirePublicDoHEndpoint(t)
 	url, err := url.Parse("https+local://1.1.1.1/dns-query")
 	common.Must(err)
 
