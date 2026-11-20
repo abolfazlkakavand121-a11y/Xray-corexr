@@ -123,6 +123,8 @@ func TestTLSRecordFragmentCompletesTLSHandshake(t *testing.T) {
 	if err != nil { t.Fatal(err) }
 
 	clientPipe, serverPipe := net.Pipe()
+	defer clientPipe.Close()
+	defer serverPipe.Close()
 	maskedClient, err := NewConnClient(&Config{PacketsFrom: -1, PacketsTo: 2}, clientPipe, false)
 	if err != nil { t.Fatal(err) }
 	client := tls.Client(maskedClient, &tls.Config{ServerName: "example.test", InsecureSkipVerify: true})
@@ -131,7 +133,5 @@ func TestTLSRecordFragmentCompletesTLSHandshake(t *testing.T) {
 	go func() { serverResult <- server.Handshake() }()
 	if err := client.Handshake(); err != nil { t.Fatalf("client handshake failed: %v", err) }
 	if err := <-serverResult; err != nil { t.Fatalf("server handshake failed: %v", err) }
-	_ = client.Close()
-	_ = server.Close()
 }
 
