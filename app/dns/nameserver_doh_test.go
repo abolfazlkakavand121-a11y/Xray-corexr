@@ -2,8 +2,8 @@ package dns_test
 
 import (
 	"context"
-	"net/url"
 	stdnet "net"
+	"net/url"
 	"testing"
 	"time"
 
