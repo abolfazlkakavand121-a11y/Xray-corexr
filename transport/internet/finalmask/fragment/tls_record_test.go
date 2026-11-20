@@ -82,6 +82,60 @@ func TestTLSRecordFragmentPreservesHandshakeBytes(t *testing.T) {
 	}
 }
 
+
+func TestTLSRecordVersionOverrideChangesOnlyRecordHeader(t *testing.T) {
+	handshake := []byte{1, 0, 0, 8, 0, 1, 2, 3, 4, 5, 6, 7}
+	tail := []byte{20, 3, 3, 0, 1, 1}
+	input := clientHelloRecord(handshake, tail)
+	clientPipe, serverPipe := net.Pipe()
+	defer clientPipe.Close()
+	defer serverPipe.Close()
+
+	conn, err := NewConnClient(&Config{PacketsFrom: -2, PacketsTo: 0x0303}, clientPipe, false)
+	if err != nil { t.Fatal(err) }
+	type readResult struct { data []byte; err error }
+	read := make(chan readResult, 1)
+	go func() {
+		data, err := readExactly(serverPipe, len(input))
+		read <- readResult{data: data, err: err}
+	}()
+	n, err := conn.Write(input)
+	if err != nil { t.Fatal(err) }
+	if n != len(input) { t.Fatalf("Write returned %d, want %d", n, len(input)) }
+	result := <-read
+	if result.err != nil { t.Fatal(result.err) }
+	want := append([]byte(nil), input...)
+	want[1], want[2] = 3, 3
+	if !bytes.Equal(result.data, want) {
+		t.Fatalf("record version override changed unexpected bytes
+ got: %x
+want: %x", result.data, want)
+	}
+	if conn.(interface{ Splice() bool }).Splice() {
+		t.Fatal("TLS record version mode must not be unwrapped for splice")
+	}
+}
+
+func TestTLSRecordVersionOverrideIsClientOnly(t *testing.T) {
+	input := clientHelloRecord([]byte{1, 0, 0, 4, 0, 0, 0, 0}, nil)
+	clientPipe, serverPipe := net.Pipe()
+	defer clientPipe.Close()
+	defer serverPipe.Close()
+	conn, err := NewConnServer(&Config{PacketsFrom: -2, PacketsTo: 0x0303}, clientPipe, true)
+	if err != nil { t.Fatal(err) }
+	read := make(chan []byte, 1)
+	go func() {
+		data, _ := readExactly(serverPipe, len(input))
+		read <- data
+	}()
+	if n, err := conn.Write(input); err != nil || n != len(input) {
+		t.Fatalf("server-side write: n=%d err=%v", n, err)
+	}
+	if got := <-read; !bytes.Equal(got, input) {
+		t.Fatal("server-side record version must remain unchanged")
+	}
+}
+
 func TestTLSRecordFragmentFailsOpenForIncompleteRecord(t *testing.T) {
 	input := []byte{22, 3, 1, 0, 20, 1, 0}
 	clientPipe, serverPipe := net.Pipe()
