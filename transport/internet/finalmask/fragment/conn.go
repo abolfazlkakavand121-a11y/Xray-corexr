@@ -135,13 +135,18 @@ func (c *fragmentConn) Write(p []byte) (n int, err error) {
 	// Serialize TLS-record-mode writes so only the first outbound write can be
 	// transformed and concurrent writes cannot overtake it.
 	if c.config.PacketsFrom == -1 {
+		if c.server {
+			return c.Conn.Write(p)
+		}
 		c.tlsRecordMu.Lock()
-		defer c.tlsRecordMu.Unlock()
-		if c.server || c.tlsRecordDone {
+		if c.tlsRecordDone {
+			c.tlsRecordMu.Unlock()
 			return c.Conn.Write(p)
 		}
 		c.tlsRecordDone = true
-		return c.writeTLSRecordFragment(p)
+		n, err = c.writeTLSRecordFragment(p)
+		c.tlsRecordMu.Unlock()
+		return n, err
 	}
 
 	c.count++
