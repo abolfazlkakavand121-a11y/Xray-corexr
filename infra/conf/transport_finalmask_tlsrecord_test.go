@@ -53,9 +53,13 @@ func TestTLSRecordMaskRecordVersionConfig(t *testing.T) {
 func TestTLSRecordMaskRecordVersionRejectsInvalidConfig(t *testing.T) {
 	for _, rawJSON := range []string{`{"recordVersion":768}`, `{"recordVersion":772}`, `{"recordVersion":769,"splitAt":2}`} {
 		raw, err := tcpmaskLoader.LoadWithID([]byte(rawJSON), "tls-record")
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 		buildable, ok := raw.(Buildable)
-		if !ok { t.Fatalf("loaded config has type %T, want Buildable", raw) }
+		if !ok {
+			t.Fatalf("loaded config has type %T, want Buildable", raw)
+		}
 		if _, err := buildable.Build(); err == nil {
 			t.Fatalf("expected invalid config to be rejected: %s", rawJSON)
 		}
