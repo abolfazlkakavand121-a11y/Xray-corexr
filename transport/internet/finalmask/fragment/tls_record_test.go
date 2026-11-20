@@ -82,7 +82,6 @@ func TestTLSRecordFragmentPreservesHandshakeBytes(t *testing.T) {
 	}
 }
 
-
 func TestTLSRecordVersionOverrideChangesOnlyRecordHeader(t *testing.T) {
 	handshake := []byte{1, 0, 0, 8, 0, 1, 2, 3, 4, 5, 6, 7}
 	tail := []byte{20, 3, 3, 0, 1, 1}
