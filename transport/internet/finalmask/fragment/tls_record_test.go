@@ -324,7 +324,7 @@ func TestTLSRecordSNIFragmentBuffersSplitApplicationWrites(t *testing.T) {
 	defer clientPipe.Close()
 	defer serverPipe.Close()
 
-	conn, err := NewConnClient(&Config{PacketsFrom: -3, PacketsTo: 2}, clientPipe, false)
+	conn, err := NewConnClient(&Config{PacketsFrom: -3, PacketsTo: 3}, clientPipe, false)
 	if err != nil {
 		t.Fatal(err)
 	}
