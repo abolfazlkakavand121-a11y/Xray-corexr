@@ -27,6 +27,57 @@ func readExactly(conn net.Conn, size int) ([]byte, error) {
 	return data, err
 }
 
+func clientHelloWithSNI(host string) []byte {
+	body := append([]byte{3, 3}, make([]byte, 32)...)
+	body = append(body, 0)
+	body = append(body, 0, 2, 0x13, 0x01)
+	body = append(body, 1, 0)
+
+	otherExtension := []byte{0, 16, 0, 1, 0}
+	serverName := []byte{0}
+	serverName = append(serverName, byte(len(host)>>8), byte(len(host)))
+	serverName = append(serverName, []byte(host)...)
+	sniData := []byte{byte(len(serverName) >> 8), byte(len(serverName))}
+	sniData = append(sniData, serverName...)
+	sniExtension := []byte{0, 0, byte(len(sniData) >> 8), byte(len(sniData))}
+	sniExtension = append(sniExtension, sniData...)
+
+	extensions := append(otherExtension, sniExtension...)
+	body = append(body, byte(len(extensions)>>8), byte(len(extensions)))
+	body = append(body, extensions...)
+
+	handshake := []byte{1, byte(len(body) >> 16), byte(len(body) >> 8), byte(len(body))}
+	return append(handshake, body...)
+}
+
+func TestTLSClientHelloSNISplitOffsets(t *testing.T) {
+	handshake := clientHelloWithSNI("example.com")
+	sniExtensionStart := 4 + 2 + 32 + 1 + 2 + 2 + 1 + 1 + 2 + 5
+	hostStart := sniExtensionStart + 4 + 2 + 1 + 2
+
+	if got := tlsClientHelloSNISplit(handshake, 1); got != sniExtensionStart {
+		t.Fatalf("before-extension split = %d, want %d", got, sniExtensionStart)
+	}
+	if got := tlsClientHelloSNISplit(handshake, 2); got != hostStart+len("example.com")/2 {
+		t.Fatalf("mid-hostname split = %d, want %d", got, hostStart+len("example.com")/2)
+	}
+	if got := tlsClientHelloSNISplit(handshake, 99); got != -1 {
+		t.Fatalf("unknown mode split = %d, want -1", got)
+	}
+}
+
+func TestTLSClientHelloSNISplitRejectsMalformedInput(t *testing.T) {
+	for _, payload := range [][]byte{
+		nil,
+		{1, 0, 0, 1},
+		{2, 0, 0, 0},
+	} {
+		if got := tlsClientHelloSNISplit(payload, 1); got != -1 {
+			t.Fatalf("malformed payload split = %d, want -1", got)
+		}
+	}
+}
+
 func TestTLSRecordFragmentPreservesHandshakeBytes(t *testing.T) {
 	handshake := []byte{1, 0, 0, 8, 0, 1, 2, 3, 4, 5, 6, 7}
 	tail := []byte{20, 3, 3, 0, 1, 1}
