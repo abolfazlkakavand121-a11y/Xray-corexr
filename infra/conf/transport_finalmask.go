@@ -328,17 +328,32 @@ func (c *FragmentMask) Build() (proto.Message, error) {
 // TLSRecordMask splits the first outbound TLS ClientHello handshake record into
 // two valid TLS records. The handshake bytes and transcript remain unchanged.
 type TLSRecordMask struct {
-	SplitAt       int32 `json:"splitAt"`
-	RecordVersion int32 `json:"recordVersion"`
+	SplitAt       int32  `json:"splitAt"`
+	RecordVersion int32  `json:"recordVersion"`
+	SNISplit      string `json:"sniSplit"`
 }
 
 func (c *TLSRecordMask) Build() (proto.Message, error) {
+	if c.SNISplit != "" {
+		if c.SplitAt != 0 || c.RecordVersion != 0 {
+			return nil, errors.New("tls-record sniSplit cannot be combined with splitAt or recordVersion")
+		}
+		var mode int64
+		switch c.SNISplit {
+		case "before-extension":
+			mode = 1
+		case "mid-hostname":
+			mode = 2
+		default:
+			return nil, errors.New("tls-record sniSplit must be before-extension or mid-hostname")
+		}
+		// PacketsFrom=-3 marks SNI-aware ClientHello fragmentation.
+		return &fragment.Config{PacketsFrom: -3, PacketsTo: mode}, nil
+	}
 	if c.RecordVersion != 0 {
 		if c.SplitAt != 0 {
 			return nil, errors.New("tls-record splitAt and recordVersion are separate modes")
 		}
-		// TLS record legacy_version values are 0x0301..0x0303. PacketsFrom=-2
-		// is an internal mode marker; PacketsTo carries the 16-bit version.
 		if c.RecordVersion < 0x0301 || c.RecordVersion > 0x0303 {
 			return nil, errors.New("tls-record recordVersion must be 0x0301, 0x0302, or 0x0303")
 		}
@@ -352,7 +367,6 @@ func (c *TLSRecordMask) Build() (proto.Message, error) {
 	if splitAt < 1 || splitAt > 512 {
 		return nil, errors.New("tls-record splitAt must be between 1 and 512")
 	}
-	// PacketsFrom=-1 marks the existing first-ClientHello record split mode.
 	return &fragment.Config{PacketsFrom: -1, PacketsTo: int64(splitAt)}, nil
 }
 
