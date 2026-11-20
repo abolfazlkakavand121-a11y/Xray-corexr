@@ -173,17 +173,29 @@ func TestTLSRecordFragmentCompletesTLSHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	parsedCert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(parsedCert)
 
 	clientPipe, serverPipe := net.Pipe()
 	defer clientPipe.Close()
 	defer serverPipe.Close()
+	if err := clientPipe.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := serverPipe.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	maskedClient, err := NewConnClient(&Config{PacketsFrom: -1, PacketsTo: 2}, clientPipe, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	client := tls.Client(maskedClient, &tls.Config{
-		ServerName:         "example.test",
-		InsecureSkipVerify: true,
+		ServerName: "example.test",
+		RootCAs:    roots,
 	})
 	server := tls.Server(serverPipe, &tls.Config{
 		Certificates: []tls.Certificate{serverCert},
