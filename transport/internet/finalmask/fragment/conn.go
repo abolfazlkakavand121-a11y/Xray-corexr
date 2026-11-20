@@ -99,6 +99,113 @@ func (c *fragmentConn) writeTLSRecordVersion(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// tlsClientHelloSNISplit returns a split offset within the handshake payload.
+// Mode 1 splits immediately before the SNI extension; mode 2 splits in the
+// middle of the first host_name value. Invalid or absent SNI returns -1.
+func tlsClientHelloSNISplit(payload []byte, mode int64) int {
+	if len(payload) < 4 || payload[0] != 1 {
+		return -1
+	}
+	handshakeLen := int(payload[1])<<16 | int(payload[2])<<8 | int(payload[3])
+	end := 4 + handshakeLen
+	if end > len(payload) {
+		return -1
+	}
+	pos := 4
+	if pos+34 > end {
+		return -1
+	}
+	pos += 34
+	if pos+1 > end {
+		return -1
+	}
+	sessionIDLen := int(payload[pos])
+	pos++
+	if pos+sessionIDLen+2 > end {
+		return -1
+	}
+	pos += sessionIDLen
+	cipherSuitesLen := int(binary.BigEndian.Uint16(payload[pos : pos+2]))
+	pos += 2
+	if pos+cipherSuitesLen+1 > end {
+		return -1
+	}
+	pos += cipherSuitesLen
+	compressionMethodsLen := int(payload[pos])
+	pos++
+	if pos+compressionMethodsLen+2 > end {
+		return -1
+	}
+	pos += compressionMethodsLen
+	extensionsLen := int(binary.BigEndian.Uint16(payload[pos : pos+2]))
+	pos += 2
+	extensionsEnd := pos + extensionsLen
+	if extensionsEnd > end {
+		return -1
+	}
+	for pos+4 <= extensionsEnd {
+		extensionStart := pos
+		extensionType := binary.BigEndian.Uint16(payload[pos : pos+2])
+		extensionLen := int(binary.BigEndian.Uint16(payload[pos+2 : pos+4]))
+		pos += 4
+		if pos+extensionLen > extensionsEnd {
+			return -1
+		}
+		if extensionType == 0 {
+			extensionEnd := pos + extensionLen
+			if pos+5 > extensionEnd {
+				return -1
+			}
+			serverNameListLen := int(binary.BigEndian.Uint16(payload[pos : pos+2]))
+			listStart := pos + 2
+			listEnd := listStart + serverNameListLen
+			if listEnd > extensionEnd || listStart+3 > listEnd {
+				return -1
+			}
+			nameType := payload[listStart]
+			nameLen := int(binary.BigEndian.Uint16(payload[listStart+1 : listStart+3]))
+			hostStart := listStart + 3
+			if nameType != 0 || hostStart+nameLen > listEnd || nameLen < 2 {
+				return -1
+			}
+			switch mode {
+			case 1:
+				return extensionStart
+			case 2:
+				return hostStart + nameLen/2
+			default:
+				return -1
+			}
+		}
+		pos += extensionLen
+	}
+	return -1
+}
+
+func (c *fragmentConn) writeTLSRecordSNIFragment(p []byte) (int, error) {
+	if len(p) < 9 || p[0] != 22 {
+		return c.Conn.Write(p)
+	}
+	recordLen := int(binary.BigEndian.Uint16(p[3:5]))
+	recordEnd := 5 + recordLen
+	if recordLen < 4 || recordEnd > len(p) {
+		return c.Conn.Write(p)
+	}
+	payload := p[5:recordEnd]
+	splitAt := tlsClientHelloSNISplit(payload, c.config.PacketsTo)
+	if splitAt <= 0 || splitAt >= len(payload) {
+		return c.Conn.Write(p)
+	}
+	wire := make([]byte, 0, len(p)+5)
+	wire = appendTLSRecord(wire, p[:3], payload[:splitAt])
+	wire = appendTLSRecord(wire, p[:3], payload[splitAt:])
+	wire = append(wire, p[recordEnd:]...)
+	if err := writeFull(c.Conn, wire); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
 func (c *fragmentConn) writeTLSRecordFragment(p []byte) (int, error) {
 	// Fail open for non-TLS, incomplete, or non-ClientHello first writes.
 	if len(p) < 9 || p[0] != 22 {
@@ -159,9 +266,8 @@ func writeFull(conn net.Conn, data []byte) error {
 }
 
 func (c *fragmentConn) Write(p []byte) (n int, err error) {
-	// Serialize TLS-record-mode writes so only the first outbound write can be
-	// transformed and concurrent writes cannot overtake it.
-	if c.config.PacketsFrom == -1 {
+	// Serialize first-flight TLS transforms so concurrent writes cannot overtake them.
+	if c.config.PacketsFrom == -1 || c.config.PacketsFrom == -2 || c.config.PacketsFrom == -3 {
 		if c.server {
 			return c.Conn.Write(p)
 		}
@@ -171,7 +277,14 @@ func (c *fragmentConn) Write(p []byte) (n int, err error) {
 			return c.Conn.Write(p)
 		}
 		c.tlsRecordDone = true
-		n, err = c.writeTLSRecordFragment(p)
+		switch c.config.PacketsFrom {
+		case -1:
+			n, err = c.writeTLSRecordFragment(p)
+		case -2:
+			n, err = c.writeTLSRecordVersion(p)
+		case -3:
+			n, err = c.writeTLSRecordSNIFragment(p)
+		}
 		c.tlsRecordMu.Unlock()
 		return n, err
 	}
