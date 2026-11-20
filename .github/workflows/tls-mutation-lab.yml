@@ -1,0 +1,26 @@
+name: TLS mutation lab tests
+
+on:
+  push:
+    paths:
+      - "research/tls-mutation-lab/**"
+      - ".github/workflows/tls-mutation-lab.yml"
+  pull_request:
+    paths:
+      - "research/tls-mutation-lab/**"
+      - ".github/workflows/tls-mutation-lab.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run parser and mutation tests
+        working-directory: research/tls-mutation-lab
+        run: python -m unittest -v
