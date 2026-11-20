@@ -2,7 +2,6 @@ package fragment
 
 import (
 	"bytes"
-	"errors"
 	"io"
 	"net"
 	"testing"
@@ -45,12 +44,13 @@ func TestTLSRecordFragmentPreservesHandshakeBytes(t *testing.T) {
 	if n != len(input) { t.Fatalf("Write returned %d, want %d", n, len(input)) }
 
 	wire := raw.Bytes()
-	if len(wire) < 10 || wire[0] != 22 || wire[5] != 22 {
+	if len(wire) < 10 || wire[0] != 22 {
 		t.Fatalf("expected two handshake records, got %x", wire)
 	}
 	firstLen := int(wire[3])<<8 | int(wire[4])
 	if firstLen != 2 { t.Fatalf("first record payload length = %d, want 2", firstLen) }
 	secondOffset := 5 + firstLen
+	if wire[secondOffset] != 22 { t.Fatalf("second record missing at offset %d: %x", secondOffset, wire) }
 	secondLen := int(wire[secondOffset+3])<<8 | int(wire[secondOffset+4])
 	secondStart := secondOffset + 5
 	if !bytes.Equal(append(append([]byte{}, wire[5:secondOffset]...), wire[secondStart:secondStart+secondLen]...), handshake) {
@@ -95,4 +95,3 @@ func TestTLSRecordFragmentIsClientOnly(t *testing.T) {
 	if !bytes.Equal(raw.Bytes(), input) { t.Fatal("server-side writes must remain unchanged") }
 }
 
-var _ = errors.Is
