@@ -2,7 +2,14 @@ package fragment
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
 	"io"
+	"math/big"
 	"net"
 	"testing"
 	"time"
@@ -93,5 +100,38 @@ func TestTLSRecordFragmentIsClientOnly(t *testing.T) {
 	if err != nil { t.Fatal(err) }
 	if _, err := conn.Write(input); err != nil { t.Fatal(err) }
 	if !bytes.Equal(raw.Bytes(), input) { t.Fatal("server-side writes must remain unchanged") }
+}
+
+func TestTLSRecordFragmentCompletesTLSHandshake(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil { t.Fatal(err) }
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		NotBefore: time.Now().Add(-time.Hour),
+		NotAfter: time.Now().Add(time.Hour),
+		DNSNames: []string{"example.test"},
+		KeyUsage: x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil { t.Fatal(err) }
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil { t.Fatal(err) }
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
+	serverCert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil { t.Fatal(err) }
+
+	clientPipe, serverPipe := net.Pipe()
+	maskedClient, err := NewConnClient(&Config{PacketsFrom: -1, PacketsTo: 2}, clientPipe, false)
+	if err != nil { t.Fatal(err) }
+	client := tls.Client(maskedClient, &tls.Config{ServerName: "example.test", InsecureSkipVerify: true})
+	server := tls.Server(serverPipe, &tls.Config{Certificates: []tls.Certificate{serverCert}})
+	serverResult := make(chan error, 1)
+	go func() { serverResult <- server.Handshake() }()
+	if err := client.Handshake(); err != nil { t.Fatalf("client handshake failed: %v", err) }
+	if err := <-serverResult; err != nil { t.Fatalf("server handshake failed: %v", err) }
+	_ = client.Close()
+	_ = server.Close()
 }
 
