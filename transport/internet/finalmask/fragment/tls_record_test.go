@@ -125,6 +125,9 @@ func TestTLSRecordSNIFragmentPreservesHandshakeBytes(t *testing.T) {
 	if !bytes.Equal(wire[secondStart+secondLen:], input[len(input)-6:]) {
 		t.Fatal("bytes after the ClientHello record changed")
 	}
+	if conn.(interface{ Splice() bool }).Splice() {
+		t.Fatal("SNI-aware TLS record mode must not be unwrapped for splice")
+	}
 }
 
 func TestTLSRecordFragmentPreservesHandshakeBytes(t *testing.T) {
